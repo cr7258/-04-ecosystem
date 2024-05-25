@@ -1,83 +1,42 @@
-# Geektime Rust 语言训练营
+# 召唤元素：Rust 生态系统概览
 
-## 环境设置
+## thiserror 和 anyhow
 
-### 安装 Rust
+在 Rust 中，thiserror 和 anyhow 是用于错误处理的两个常用库，它们各有用途和适用场景。
 
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
+### thiserror
 
-### 安装 VSCode 插件
+thiserror 允许你定义自己的错误类型，并为每个错误变体提供自定义的错误信息。你需要使用 `#[derive(Error)]` 来为你的错误类型派生 `Error` trait，并使用 `#[error("...")]` 属性来指定每个错误变体的错误信息。
 
-- crates: Rust 包管理
-- Even Better TOML: TOML 文件支持
-- Better Comments: 优化注释显示
-- Error Lens: 错误提示优化
-- GitLens: Git 增强
-- Github Copilot: 代码提示
-- indent-rainbow: 缩进显示优化
-- Prettier - Code formatter: 代码格式化
-- REST client: REST API 调试
-- rust-analyzer: Rust 语言支持
-- Rust Test lens: Rust 测试支持
-- Rust Test Explorer: Rust 测试概览
-- TODO Highlight: TODO 高亮
-- vscode-icons: 图标优化
-- YAML: YAML 文件支持
+thiserror 会为你的自定义错误类型自动实现 `From` trait。当你使用 `#[from]` 属性时，thiserror 会为相应的错误类型生成 `From` 实现。
 
-### 安装 cargo generate
+通过为你的自定义错误类型实现 `From` trait，你可以将其他错误类型轻松地转换为你的错误类型。这在错误传播和处理过程中非常有用。例如，如果你的函数返回一个 `Result<T, MyError>`，而某个内部函数返回一个 `Result<T, OtherError>`，你可以使用 `?` 运算符将 `OtherError` 自动转换为 `MyError`，前提是 `MyError` 实现了 `From<OtherError>`，这允许你将底层的错误类型包装在你的自定义错误类型中。
 
-cargo generate 是一个用于生成项目模板的工具。它可以使用已有的 github repo 作为模版生成新的项目。
+### anyhow
+
+anyhow 提供了一个 `anyhow::Error` 类型，它可以包装任何实现了 `std::error::Error` 特征的错误类型。你不需要定义自己的错误类型，而是直接使用 `anyhow::Error`。
+
+### 如何选择 thiserror 和 anyhow
+
+如果你想要设计自己的错误类型，同时给调用者提供具体的信息时，就使用 thiserror，例如当你在开发一个三方库代码时。如果你只想要简单，就使用 anyhow，例如在自己的应用服务中。
+
+### 示例代码
+
+结合使用了 anyhow 和 thiserror。
 
 ```bash
-cargo install cargo-generate
-```
+cargo run --example err
 
-在我们的课程中，新的项目会使用 `tyr-rust-bootcamp/template` 模版生成基本的代码：
+# 输出
+size of anyhow::Error is 8
+size of std::io::Error is 8
+size of std::num::ParseIntError is 1
+size of serde_json::Error is 8
+size of string is 24
+size of MyError is 24
 
-```bash
-cargo generate tyr-rust-bootcamp/template
-```
+Error: Can not find file: non-existen-file.txt
 
-### 安装 pre-commit
-
-pre-commit 是一个代码检查工具，可以在提交代码前进行代码检查。
-
-```bash
-pipx install pre-commit
-```
-
-安装成功后运行 `pre-commit install` 即可。
-
-### 安装 Cargo deny
-
-Cargo deny 是一个 Cargo 插件，可以用于检查依赖的安全性。
-
-```bash
-cargo install --locked cargo-deny
-```
-
-### 安装 typos
-
-typos 是一个拼写检查工具。
-
-```bash
-cargo install typos-cli
-```
-
-### 安装 git cliff
-
-git cliff 是一个生成 changelog 的工具。
-
-```bash
-cargo install git-cliff
-```
-
-### 安装 cargo nextest
-
-cargo nextest 是一个 Rust 增强测试工具。
-
-```bash
-cargo install cargo-nextest --locked
+Caused by:
+    No such file or directory (os error 2)
 ```
