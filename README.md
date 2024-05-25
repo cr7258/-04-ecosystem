@@ -152,3 +152,67 @@ tail -f /tmp/logs/ecosystem.log.2024-05-25
     at examples/axum_tracing.rs:50
     in axum_tracing::index_handler
 ```
+
+## OpenTelemetry
+
+### 启动 Jaeger
+
+```bash
+docker run -d -p16686:16686 -p4317:4317 -e COLLECTOR_OTLP_ENABLED=true jaegertracing/all-in-one:latest
+```
+
+浏览器输入 http://localhost:16686/ 可以查看 Jaeger 的 Web 界面。
+
+![](https://chengzw258.oss-cn-beijing.aliyuncs.com/Article/20240525111822.png)
+
+### 主要代码
+
+初始化 Tracer 对象，设置了 exporter 的连接信息，以及 trace 的配置信息：例如 service.name 来标识服务名称，最大事件数，最大属性数等。
+
+```rust
+fn init_tracer() -> anyhow::Result<Tracer> {
+    let tracer = opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(
+            opentelemetry_otlp::new_exporter()
+                .tonic()
+                .with_endpoint("http://localhost:4317"),
+        )
+        .with_trace_config(
+            trace::config()
+                .with_id_generator(RandomIdGenerator::default())
+                .with_max_events_per_span(32)
+                .with_max_attributes_per_span(64)
+                .with_resource(Resource::new(vec![KeyValue::new(
+                    "service.name",
+                    "axum-tracing",
+                )])),
+        )
+        .install_batch(runtime::Tokio)?;
+    Ok(tracer)
+}
+```
+
+创建并注册 opentelemetry layer。
+
+```rust
+// opentelemetry tracing layer for tracing-subscriber
+let tracer = init_tracer()?;
+let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+
+// 注册 opentelemetry layer
+tracing_subscriber::registry()
+     .....
+    .with(opentelemetry)
+    .init();
+```
+
+### 验证效果
+
+启动服务，curl 命令请求 http://localhost:8080/， 在 Jaeger 的 Web 界面可以看到如下的 trace 信息：
+
+```
+cargo run --example opentelemetry-tracingq
+```
+
+![](https://chengzw258.oss-cn-beijing.aliyuncs.com/Article/20240525113449.png)

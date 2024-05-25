@@ -16,3 +16,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 axum = { version = "0.7.5", features = ["http2", "query", "tracing"] }
 tokio = { version = "1.37.0", features = ["rt", "rt-multi-thread", "macros"] }
 log = "0.4.21"
+opentelemetry = "0.22.0"
+opentelemetry-otlp = { version = "0.15.0", features = ["tonic"] }
+opentelemetry_sdk = { version = "0.22.1", features = ["rt-tokio"] }
+tracing-opentelemetry = "0.23.0"
