@@ -20,7 +20,7 @@ anyhow 提供了一个 `anyhow::Error` 类型，它可以包装任何实现了 `
 
 如果你想要设计自己的错误类型，同时给调用者提供具体的信息时，就使用 thiserror，例如当你在开发一个三方库代码时。如果你只想要简单，就使用 anyhow，例如在自己的应用服务中。
 
-### 示例代码
+### 验证效果
 
 结合使用了 anyhow 和 thiserror。
 
@@ -39,4 +39,116 @@ Error: Can not find file: non-existen-file.txt
 
 Caused by:
     No such file or directory (os error 2)
+```
+
+## 日志
+
+### 主要代码
+
+```rust
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // 创建每日滚动的日志文件附加器
+    let file_appender = tracing_appender::rolling::daily("/tmp/logs", "ecosystem.log");
+    // 将文件附加器设置为非阻塞模式
+    // 非阻塞模式的优势在于日志记录操作不会阻塞应用程序的主要执行路径，提高了应用程序的性能和响应速度。
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    // 使用 fmt::Layer 配置日志格式化。
+    // .with_span_events(FmtSpan::CLOSE) 表示在跟踪 span 结束时记录日志，
+    // .pretty() 表示使用美化的日志格式，
+    // .with_filter(LevelFilter::DEBUG) 设置日志级别为 DEBUG。
+    let console = fmt::Layer::new()
+        .with_span_events(FmtSpan::CLOSE)
+        .pretty()
+        .with_filter(LevelFilter::DEBUG);
+
+    let file = fmt::Layer::new()
+        .with_writer(non_blocking)
+        .pretty()
+        .with_filter(LevelFilter::INFO);
+
+    // 注册控制台和文件日志。
+    tracing_subscriber::registry()
+        .with(console)
+        .with(file)
+        .init();
+
+    let addr = "0.0.0.0:8080";
+    let app = Router::new().route("/", get(index_handler));
+
+    let listener = TcpListener::bind(addr).await?;
+    info!("Starting server on {}", addr);
+    axum::serve(listener, app.into_make_service()).await?;
+    Ok(())
+}
+```
+
+`#[instrument]` 用于自动为函数添加跟踪span。
+```rust
+// 会加上函数的调用信息
+// in axum_tracing::long_task
+// in axum_tracing::index_handler
+#[instrument]
+async fn index_handler() -> String {
+    debug!("index handler started");
+    // await 表示等待一个持续 10 毫秒的异步睡眠操作完成。
+    // 在这 10 毫秒内，函数会让出控制权，允许其他任务执行。
+    sleep(Duration::from_millis(10)).await;
+    let ret = long_task().await;
+    info!(http.status = 200, "index handler completed");
+    ret
+}
+```
+
+### 验证效果
+
+发起一次 HTTP 请求，控制台日志如下：
+```bash
+cargo run --example axum_tracing
+
+# 输出
+  2024-05-25T02:39:05.792497Z  INFO axum_tracing: Starting server on 0.0.0.0:8080
+    at examples/axum_tracing.rs:40
+
+  2024-05-25T02:39:08.884575Z DEBUG axum_tracing: index handler started
+    at examples/axum_tracing.rs:47
+    in axum_tracing::index_handler
+
+  2024-05-25T02:39:09.010202Z  WARN axum_tracing: task takes too long, app.task_duration: 114268
+    at examples/axum_tracing.rs:59
+    in axum_tracing::long_task
+    in axum_tracing::index_handler
+
+  2024-05-25T02:39:09.010357Z  INFO axum_tracing: close, time.busy: 233µs, time.idle: 114ms
+    at examples/axum_tracing.rs:54
+    in axum_tracing::long_task
+    in axum_tracing::index_handler
+
+  2024-05-25T02:39:09.010438Z  INFO axum_tracing: index handler completed, http.status: 200
+    at examples/axum_tracing.rs:50
+    in axum_tracing::index_handler
+
+  2024-05-25T02:39:09.010480Z  INFO axum_tracing: close, time.busy: 486µs, time.idle: 125ms
+    at examples/axum_tracing.rs:45
+    in axum_tracing::index_handler
+```
+
+由于我们设置在文件中只保留 INFO 级别以上的日志，所以文件日志如下：
+
+```bash
+tail -f /tmp/logs/ecosystem.log.2024-05-25
+
+# 输出
+  2024-05-25T02:39:05.792627Z  INFO axum_tracing: Starting server on 0.0.0.0:8080
+    at examples/axum_tracing.rs:40
+
+  2024-05-25T02:39:09.010294Z  WARN axum_tracing: task takes too long, app.task_duration: 114268
+    at examples/axum_tracing.rs:59
+    in axum_tracing::long_task
+    in axum_tracing::index_handler
+
+  2024-05-25T02:39:09.010451Z  INFO axum_tracing: index handler completed, http.status: 200
+    at examples/axum_tracing.rs:50
+    in axum_tracing::index_handler
 ```
