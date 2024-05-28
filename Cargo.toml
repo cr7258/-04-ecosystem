@@ -22,3 +22,4 @@ opentelemetry_sdk = { version = "0.22.1", features = ["rt-tokio"] }
 tracing-opentelemetry = "0.23.0"
 chrono = "0.4.37"
 derive_builder = "0.20.0"
+derive_more = "0.99.15"
