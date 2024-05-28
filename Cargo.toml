@@ -20,3 +20,5 @@ opentelemetry = "0.22.0"
 opentelemetry-otlp = { version = "0.15.0", features = ["tonic"] }
 opentelemetry_sdk = { version = "0.22.1", features = ["rt-tokio"] }
 tracing-opentelemetry = "0.23.0"
+chrono = "0.4.37"
+derive_builder = "0.20.0"
