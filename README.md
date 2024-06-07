@@ -694,3 +694,102 @@ curl http://localhost:8081
 # 响应内容
 Hello, World!%
 ```
+
+### 使用 Tokio 开发一个聊天室程序
+
+定义以下 3 个数据结构：
+
+```rust
+
+// 用存储和管理所有连接到服务器的客户端，每个客户端地址映射到一个消息发送通道。
+// mpsc::Sender：mpsc（多生产者，单消费者）通道允许从多个生产者发送消息到一个消费者，例如当有新的客户端连接或者离开时，向所有客户端广播这条消息。
+// 使用 Arc<Message> 是为了在多个任务之间高效地共享消息，而不需要复制消息的内容。
+#[derive(Debug, Default)]
+struct State {
+    peers: DashMap<SocketAddr, mpsc::Sender<Arc<Message>>>
+}
+
+// 表示单个客户端连接，包含用户名和用于处理消息流的读取部分。
+// username 表示客户端的用户名。
+// SplitStream<Framed<TcpStream, LinesCodec>> 类型，表示客户端的网络流，它被分割成了读取和写入两部分，可以用于并发地读取和写入数据。
+#[derive(Debug)]
+struct Peer {
+    username: String,
+    stream: SplitStream<Framed<TcpStream, LinesCodec>>
+}
+
+// 表示不同类型的消息，包含用户加入、用户离开和聊天消息。
+#[derive(Debug)]
+enum Message {
+    UserJoined(String),
+    UserLeft(String),
+    Chat {
+        sender: String,
+        content: String,
+    }
+}
+```
+
+处理连接到聊天服务器的客户端：
+- 首先，接收客户端输入的用户名
+- 接下来，调用 `state.add` 方法，将客户端添加到服务器的状态中。这个方法会返回一个 Peer 实例，表示新添加的客户端。
+- 接着，创建一个 `UserJoined` 类型的消息，表示用户已经加入聊天，然后调用 `state.broadcast` 方法，将这条消息广播给所有其他的客户端。
+- 然后，进入一个循环，不断地从流中读取客户端发送的消息。对于每一条消息，函数都会创建一个 `Chat` 类型的消息，然后将这条消息广播给所有其他的客户端。如果读取消息失败，或者流已经结束，函数会跳出循环。
+- 最后，函数从服务器的状态中移除这个客户端，然后创建一个 `UserLeft` 类型的消息，表示用户已经离开聊天，然后将这条消息广播给所有其他的客户端。
+
+```rust
+async fn handle_client(state: Arc<State>, addr: SocketAddr, stream: TcpStream) -> Result<()> {
+    // Framed 是一个封装，它将底层的 I/O 流（如 TcpStream）与一个编码器/解码器（Codec）组合在一起，提供了一个异步的、分块处理的流接口。这使得我们能够以更高层次的抽象来处理数据，而不必关心底层的字节操作。
+    // LinesCodec 是 tokio_util::codec 提供的一个编码器/解码器，它专门用于处理基于行的文本协议。它能够将字节流解析为一行一行的文本，或者将文本编码为字节流。
+    let mut stream = Framed::new(stream, LinesCodec::new());
+    stream.send("Enter your username:").await?;
+
+    let username = match stream.next().await {
+        Some(Ok(username)) => username,
+        Some(Err(e)) => return Err(e.into()),
+        None => return Ok(()),
+    };
+
+    let mut peer = state.add(addr, username, stream).await;
+
+    let message = Arc::new(Message::user_joined(&peer.username));
+    info!("{}", message);
+    state.broadcast(addr, message).await;
+
+    while let Some(line) = peer.stream.next().await {
+        let line = match line {
+            Ok(line) => line,
+            Err(e) => {
+                warn!("Failed to read line from {}: {}", addr, e);
+                break;
+            }
+        };
+
+        let message = Arc::new(Message::chat(&peer.username, line));
+
+        state.broadcast(addr, message).await;
+    }
+
+    // when while loop exit, peer has left the chat or line reading failed
+    // remove peer from state
+    state.peers.remove(&addr);
+
+    // notify others that a user has left
+    let message = Arc::new(Message::user_left(&peer.username));
+    info!("{}", message);
+
+    state.broadcast(addr, message).await;
+
+    Ok(())
+}
+```
+
+启动聊天室服务器：
+
+```bash
+cargo run --example chat
+```
+
+使用 telnet 命令连接服务器，并尝试发送消息：
+
+![](https://chengzw258.oss-cn-beijing.aliyuncs.com/Article/20240607111702.png)
