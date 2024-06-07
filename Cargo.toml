@@ -14,7 +14,7 @@ tracing = "0.1.40"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 axum = { version = "0.7.5", features = ["http2", "query", "tracing"] }
-tokio = { version = "1.37.0", features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { version = "1.37.0", features = ["rt", "rt-multi-thread", "macros", "fs"] }
 log = "0.4.21"
 opentelemetry = "0.22.0"
 opentelemetry-otlp = { version = "0.15.0", features = ["tonic"] }
@@ -24,3 +24,4 @@ chrono = "0.4.37"
 derive_builder = "0.20.0"
 derive_more = "0.99.15"
 strum = { version = "0.26.2", features = ["derive"] }
+blake3 = "1.5.1"

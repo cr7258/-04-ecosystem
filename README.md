@@ -466,3 +466,231 @@ fn main() {
     }
 }
 ```
+
+## Tokio
+
+### Tokio 基本使用
+
+以下是一段最简单的 Tokio 代码，使用 #[tokio::main] 宏来启动一个异步的 main 函数。
+
+```rust
+#[tokio::main]
+async fn main() {
+    let a = 10;
+    let b = 20;
+    println!("{} + {} = {}", a, b, a + b);
+}
+```
+
+使用 `cargo expand` 命令可以展开宏。
+
+```bash
+cargo expand --example tokio0
+```
+
+展开后的代码如下，这里重点关注 tokio 运行时初始化和执行异步任务：
+- 使用 `tokio::runtime::Builder::new_multi_thread()` 创建一个多线程运行时构建器。
+- 调用 `enable_all()` 方法启用所有 Tokio 特性（如定时器、IO 等）。
+- 调用 `build()` 方法构建运行时，并使用 `expect` 来处理可能的构建错误。
+- 最后，使用 `block_on(body)` 来运行异步任务 `body`，并等待其完成。`block_on` 会阻塞当前线程，直到 `body` 完成。这意味着在 `block_on` 返回之前，主线程将不会继续执行。这是从异步上下文切换回同步上下文的一种方式。
+
+```rust
+#![feature(prelude_import)]
+#[prelude_import]
+use std::prelude::rust_2021::*;
+#[macro_use]
+extern crate std;
+fn main() {
+    let body = async {
+        let a = 10;
+        let b = 20;
+        {
+            ::std::io::_print(format_args!("{0} + {1} = {2}\n", a, b, a + b));
+        };
+    };
+    #[allow(clippy::expect_used, clippy::diverging_sub_expression)]
+    // tokio 运行时初始化和执行异步任务：
+    {
+        return tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed building the Runtime")
+            .block_on(body);
+    }
+}
+```
+
+当我们明白了 `#[tokio::main]` 宏的工作原理后，我们可以手动创建一个 Tokio 运行时，然后使用 `tokio::spawn` 函数来执行异步任务。
+- 使用 `tokio::runtime::Builder` 创建了一个新的 Tokio 运行时，并配置为当前线程运行时。
+- 使用 `block_on` 在新创建的运行时上运行 `run` 函数，这会阻塞当前线程直到 `run` 函数完成。
+- 在 `run` 函数在运行时上启动了两个异步任务：
+  - -第一个任务读取 Cargo.toml 文件并打印文件长度。
+  - 第二个任务执行耗时的阻塞任务并打印结果。
+
+```rust
+use std::{thread, time::Duration};
+
+use tokio::{
+    fs,
+    runtime::{Builder, Runtime},
+    time::sleep,
+};
+
+fn expensive_blocking_task(s: String) -> String {
+    thread::sleep(Duration::from_millis(800));
+    blake3::hash(s.as_bytes()).to_string()
+}
+
+fn main() {
+    let handle = thread::spawn(|| {
+        let rt = Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(run(&rt));
+    });
+
+    handle.join().unwrap();
+}
+
+
+async fn run(rt: &Runtime) {
+    rt.spawn(async {
+        println!("future 1");
+        let content = fs::read("Cargo.toml").await.unwrap();
+        println!("content: {:?}", content.len());
+    });
+
+    rt.spawn(async {
+        println!("future 2");
+        let result = expensive_blocking_task("hello".to_string());
+        println!("result: {}", result);
+    });
+
+    sleep(Duration::from_secs(1)).await;
+}
+```
+
+我们也可以使用 `#[tokio::main]` 来简化运行时的创建和管理，不需要手动调用 `block_on` 来运行异步任务。
+
+```rust
+use std::{thread, time::Duration};
+
+use tokio::{
+    fs,
+    // time::sleep,
+};
+
+fn expensive_blocking_task(s: String) -> String {
+    thread::sleep(Duration::from_millis(8000));
+    blake3::hash(s.as_bytes()).to_string()
+}
+
+// 使用 #[tokio::main] 宏将 main 函数标记为异步函数，并自动创建 Tokio 运行时。
+#[tokio::main]
+async fn main() {
+    let handler1 = tokio::spawn(async {
+        println!("future 1");
+        let content = fs::read("Cargo.toml").await.unwrap();
+        println!("content: {:?}", content.len());
+    });
+
+    let handler2 = tokio::spawn(async {
+        println!("future 2");
+        let result = expensive_blocking_task("hello".to_string());
+        println!("result: {}", result);
+    });
+
+    // sleep 的时候主线程会暂时让出控制权，而运行时中的其他线程会继续执行异步任务。
+    // 因此，即使主线程的 sleep 时间很短，异步任务仍然可以在后台完成执行。
+    // sleep(Duration::from_millis(1)).await;
+
+    // 但是更好的方式是使用 tokio::join! 来等待所有的异步任务完成。
+    let (res1, res2) = tokio::join!(handler1, handler2);
+
+    if let Err(e) = res1 {
+        println!("Error in handle1: {:?}", e);
+    }
+    if let Err(e) = res2 {
+        println!("Error in handle2: {:?}", e);
+    }
+}
+```
+
+### 使用 Tokio 编程简单的反向代理
+
+主要代码如下：
+
+```rust
+#[tokio::main]
+async fn main() -> Result<()> {
+  let layer = Layer::new().with_filter(LevelFilter::INFO);
+  tracing_subscriber::registry().with(layer).init();
+
+  let config = resolve_config();
+  // 这里使用 Arc 是因为 config 需要在多个异步任务中被共享和使用。
+  // 每当一个新的连接被接受时，就会创建一个新的异步任务来处理这个连接。
+  // 这个异步任务需要访问 config 来获取上游服务器的地址。
+  let config = Arc::new(config);
+
+  info!("Upstream is {}", config.upstream_addr);
+  info!("Listening on {}", config.listen_addr);
+
+  let listener = TcpListener::bind(&config.listen_addr).await?;
+  loop {
+    let (client, addr) = listener.accept().await?;
+    info!("Accepted connection from {}", addr);
+    // let cloned_config = config.clone();
+    // 如果 config 是 Arc<T> 类型，推荐使用 Arc::clone(&config)，因为它效率更高且意图明确
+    let cloned_config = Arc::clone(&config);
+    tokio::spawn(async move {
+      let upstream = TcpStream::connect(&cloned_config.upstream_addr).await?;
+      proxy(client, upstream).await?;
+      Ok::<(), anyhow::Error>(())
+    });
+  }
+
+  #[allow(unreachable_code)]
+  Ok::<(), anyhow::Error>(())
+}
+
+async fn proxy(mut client: TcpStream, mut upstream: TcpStream) -> Result<()> {
+  // Splits a TcpStream into a read half and a write half, which can be used to read and write the stream concurrently.
+  let (mut client_read, mut client_write) = client.split();
+  let (mut upstream_read, mut upstream_write) = upstream.split();
+  // io::copy 从 client_read 中读取数据并写入到 upstream_write
+  let client_to_upstream = io::copy(&mut client_read, &mut upstream_write);
+  // io::copy 从 upstream_read 中读取数据并写入到 client_write
+  let upstream_to_client = io::copy(&mut upstream_read, &mut client_write);
+
+  // 并发执行两个数据传输操作，并等待它们都完成。
+  // try_join! 宏会在两个 Future 都完成时返回结果，如果任何一个 Future 返回错误，则立即返回错误。
+  match tokio::try_join!(client_to_upstream, upstream_to_client) {
+    Ok((n, m)) => info!(
+            "proxied {} bytes from client to upstream, {} bytes from upstream to client",
+            n, m
+        ),
+    Err(e) => warn!("error proxying: {:?}", e),
+  }
+  Ok(())
+}
+```
+
+
+首先启动之前写的一个 HTTP 程序作为 upstream，监听在 8080 端口。
+
+```bash
+cargo run --example axum_tracing
+```
+
+然后启动反向代理，监听在 8081 端口，将请求原样转发给 upstream。
+
+```bash
+cargo run --example minginx
+```
+
+客户端请求反向代理。
+
+```bash
+curl http://localhost:8081
+
+# 响应内容
+Hello, World!%
+```
