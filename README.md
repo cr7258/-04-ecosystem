@@ -673,7 +673,6 @@ async fn proxy(mut client: TcpStream, mut upstream: TcpStream) -> Result<()> {
 }
 ```
 
-
 首先启动之前写的一个 HTTP 程序作为 upstream，监听在 8080 端口。
 
 ```bash
@@ -793,3 +792,105 @@ cargo run --example chat
 使用 telnet 命令连接服务器，并尝试发送消息：
 
 ![](https://chengzw258.oss-cn-beijing.aliyuncs.com/Article/20240607111702.png)
+
+### 开发 URL 短链接程序
+
+#### 安装 PostgreSQL
+
+我们需要将长链接和短链接的对应关系存储在数据库中，这里选择安装 PostgreSQL。
+
+```bash
+docker run -itd --name postgres -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:15.7
+```
+
+安装 [pgcli](https://github.com/dbcli/pgcli) 方便连接数据库进行操作，pgcli 支持自动补全和语法高亮。
+
+```bash
+brew tap dbcli/tap
+brew install pgcli
+```
+
+连接数据库。
+
+```bash
+# 连接数据库时手动输入密码
+pgcli -h localhost -u postgres
+
+# 连接数据库时指定用户名和密码
+pgcli postgres://postgres:postgres@localhost:5432
+```
+
+代码利用 sqlx 作为数据库访问层，sqlx 是一个异步、运行时安全的 SQL 查询构建器，它支持 PostgreSQL、MySQL 和 SQLite 数据库。 注意 sqlx 并不是一个 ORM 框架，我们还是需要手动编写 SQL 语句。相比于使用 ORM 框架，我们不需要学习新的 DSL，并且可以更好地控制 SQL 语句的执行。
+
+启动服务。
+
+```bash
+cargo run --example shortener
+```
+
+使用 curl 命令测试服务。首先创建一个短链接。
+
+```bash
+curl -X POST -H "Content-Type: application/json" http://localhost:9876 -d '
+{
+  "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/422"
+}
+'
+
+# 响应
+{"url":"http://127.0.0.1:9876/1M6ICm"}
+```
+
+访问短链接。
+
+```bash
+curl http://127.0.0.1:9876/1M6ICm -I -L
+HTTP/1.1 308 Permanent Redirect
+location: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/422 # 跳转到长链接的地址
+
+content-length: 0
+date: Sat, 03 Aug 2024 03:30:15 GMT
+
+HTTP/2 200
+x-goog-generation: 1722646051272868
+x-goog-metageneration: 1
+x-goog-stored-content-encoding: identity
+x-goog-stored-content-length: 152167
+x-goog-meta-goog-reserved-file-mtime: 1722645566
+x-goog-hash: crc32c=W8lYXQ==, md5=gkeYK0bpUEFzLLEPuG/L/g==
+x-goog-storage-class: STANDARD
+accept-ranges: bytes
+x-guploader-uploadid: AHxI1nNxM0duoQ2-N79vJvQFkhGoB8A-jMDU0rLxXmPWEoCTpRaTRa9oWTcNHB9PfOU3KzSPIa0tKOFdsg
+expires: Sat, 03 Aug 2024 04:30:16 GMT
+cache-control: public, max-age=3600
+last-modified: Sat, 03 Aug 2024 00:47:31 GMT
+etag: "8247982b46e95041732cb10fb86fcbfe"
+content-type: text/html
+age: 1
+alt-svc: h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+alt-svc: clear
+x-content-type-options: nosniff
+strict-transport-security: max-age=63072000
+content-security-policy: default-src 'self'; script-src 'report-sample' 'self' https://www.google-analytics.com/analytics.js https://www.googletagmanager.com/gtag/js assets.codepen.io production-assets.codepen.io https://js.stripe.com 'sha256-EehWlTYp7Bqy57gDeQttaWKp0ukTTEUKGP44h8GVeik=' 'sha256-XNBp89FG76amD8BqrJzyflxOF9PaWPqPqvJfKZPCv7M='; script-src-elem 'report-sample' 'self' https://www.google-analytics.com/analytics.js https://www.googletagmanager.com/gtag/js assets.codepen.io production-assets.codepen.io https://js.stripe.com 'sha256-EehWlTYp7Bqy57gDeQttaWKp0ukTTEUKGP44h8GVeik=' 'sha256-XNBp89FG76amD8BqrJzyflxOF9PaWPqPqvJfKZPCv7M='; style-src 'report-sample' 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; connect-src 'self' developer.allizom.org bcd.developer.allizom.org bcd.developer.mozilla.org updates.developer.allizom.org updates.developer.mozilla.org https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com https://observatory-api.mdn.allizom.net https://observatory-api.mdn.mozilla.net stats.g.doubleclick.net https://api.stripe.com; font-src 'self'; frame-src 'self' interactive-examples.mdn.mozilla.net interactive-examples.mdn.allizom.net mdn.github.io live-samples.mdn.mozilla.net live-samples.mdn.allizom.net *.mdnplay.dev *.mdnyalp.dev https://v2.scrimba.com https://scrimba.com jsfiddle.net www.youtube-nocookie.com codepen.io survey.alchemer.com https://js.stripe.com; img-src 'self' *.githubusercontent.com *.googleusercontent.com *.gravatar.com mozillausercontent.com firefoxusercontent.com profile.stage.mozaws.net profile.accounts.firefox.com mdn.dev interactive-examples.mdn.mozilla.net interactive-examples.mdn.allizom.net wikipedia.org upload.wikimedia.org https://mdn.github.io/shared-assets/ https://*.google-analytics.com https://*.googletagmanager.com www.gstatic.com; manifest-src 'self'; media-src 'self' archive.org videos.cdn.mozilla.net https://mdn.github.io/shared-assets/; child-src 'self'; worker-src 'self';
+x-frame-options: DENY
+origin-trial: A9YWJd0eN0+JyqsF5/4sYlFePcOgkAIKtGSnrERJ7zmzK65fqcrdYjmHUlxAV79Fphmwt96Gkyw2F1WmMEUEztgAAABdeyJvcmlnaW4iOiJodHRwczovL2RldmVsb3Blci5tb3ppbGxhLm9yZyIsImZlYXR1cmUiOiJQcml2YXRlQXR0cmlidXRpb24iLCJleHBpcnkiOjE3NDk3NDMyNjF9
+x-cloud-trace-context: f76ebfa231bd4bacd47f6cf4985b5499
+content-length: 0
+date: Sat, 03 Aug 2024 03:30:17 GMT
+server: Google Frontend
+via: 1.1 google
+x-cache: miss
+```
+
+在数据库中也能看到短链接和长链接的对应关系。
+
+```sql
+postgres@127.0.0.1:postgres> \c shortener
+
+postgres@127.0.0.1:shortener> select * from urls;
++--------+--------------------------------------------------------------+
+| id     | url                                                          |
+|--------+--------------------------------------------------------------|
+| 1M6ICm | https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/422 |
++--------+--------------------------------------------------------------+
+```
